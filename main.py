@@ -10,11 +10,13 @@ import numpy as np
 
 app = FastAPI()
 
+# Load dataset
 file_path = "filtered_agridata.csv"
 df = pd.read_csv(file_path)
 df['date'] = pd.to_datetime(df['date'])
 df_cleaned = df.dropna().copy()
 
+# Request models
 class CommodityRequest(BaseModel):
     commodity_name: str
 
@@ -27,27 +29,35 @@ class FuturePredictionRequest(BaseModel):
     commodity_name: str
     future_days: int
 
+# Train model function
 def train_model_for_crop(commodity_name):
     crop_data = df_cleaned[df_cleaned['commodity_name'] == commodity_name].copy()
+    
+    if crop_data.empty:
+        return {"error": f"No data found for commodity: {commodity_name}. Please check the dataset."}
+
     crop_data.sort_values(by='date', inplace=True)
     
     X = crop_data[['min_price', 'max_price']]
     y = crop_data['modal_price']
     
+    if X.shape[0] < 2:  # Ensure there are enough samples for splitting
+        return {"error": "Not enough data to train the model. Please provide more data."}
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-    
+
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
-    
+
     y_pred = model.predict(X_test)
-    
+
     mse = mean_squared_error(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
-    
+
     model_filename = f"{commodity_name}_price_model.pkl"
     joblib.dump(model, model_filename)
-    
+
     return {
         "commodity_name": commodity_name,
         "MSE": mse,
@@ -56,6 +66,7 @@ def train_model_for_crop(commodity_name):
         "model_file": model_filename
     }
 
+# API Endpoints
 @app.post("/train/")
 def train_model(request: CommodityRequest):
     return train_model_for_crop(request.commodity_name)
@@ -85,6 +96,9 @@ def predict_future_prices(request: FuturePredictionRequest):
     model = joblib.load(model_filename)
     
     historical_data = df_cleaned[df_cleaned['commodity_name'] == request.commodity_name]
+    if historical_data.empty:
+        return {"error": "No data available for future prediction."}
+    
     avg_min_price = historical_data['min_price'].mean()
     avg_max_price = historical_data['max_price'].mean()
     
